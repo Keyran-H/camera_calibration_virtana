@@ -93,8 +93,8 @@ struct ReProjectionResidual
 
 		// AngleAxisRotatePoint gives the "RX" therefore it must be translated by "t" (from camera extrinsics) to give "p".
 		p[0] += camera_extrinsics[3]; // X component of camera to calibration point
-        p[1] += camera_extrinsics[4]; // Y component of camera to calibration point
-        p[2] += camera_extrinsics[5]; // Z component of camera to calibration point
+		p[1] += camera_extrinsics[4]; // Y component of camera to calibration point
+		p[2] += camera_extrinsics[5]; // Z component of camera to calibration point
 
 		// The projected pixel coordinates would now be computed. (for now i am not including distortion)
 		T up = p[0] / p[2];
