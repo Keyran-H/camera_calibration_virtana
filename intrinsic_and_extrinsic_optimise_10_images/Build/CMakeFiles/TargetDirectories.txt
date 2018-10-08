@@ -1,3 +1,0 @@
-/home/kiran/Desktop/camera_calibration_virtana_kiran/intrinsic_and_extrinsic_optimise_10_images/Build/CMakeFiles/rebuild_cache.dir
-/home/kiran/Desktop/camera_calibration_virtana_kiran/intrinsic_and_extrinsic_optimise_10_images/Build/CMakeFiles/edit_cache.dir
-/home/kiran/Desktop/camera_calibration_virtana_kiran/intrinsic_and_extrinsic_optimise_10_images/Build/CMakeFiles/nlo_eg.dir
