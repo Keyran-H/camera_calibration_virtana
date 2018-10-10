@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(intrinsic_and_extrinsic_optimise)
+project(extrinsics_optimise)
 
 #Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
@@ -16,7 +16,7 @@ include_directories(
 )
 
 #Add the executable files
-add_executable(nlo_eg ../src/nlo_eg_intr_extr.cpp)
+add_executable(nlo_eg ../src/nlo_eg_two.cpp)
 
 
 target_link_libraries(nlo_eg

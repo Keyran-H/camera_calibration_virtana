@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(camera_calibration_virtana)
+project(intrinsic_and_extrinsic_optimise_real_data)
 
 #Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
@@ -16,7 +16,7 @@ include_directories(
 )
 
 #Add the executable files
-add_executable(nlo_eg src/nlo_eg_two.cpp)
+add_executable(nlo_eg ../src/camera_calibration_real_data.cpp)
 
 
 target_link_libraries(nlo_eg
