@@ -10,22 +10,12 @@
 #include "ceres/ceres.h"
 #include "ceres/rotation.h"
 
-/*The code MUST be edited to reflect the initial estimates based on the number of images for the camera extrinsics*/
-
 // Definitions for the dimensions of the calibration board
 static const int Number_of_internal_corners_x = 7;
 static const int Number_of_internal_corners_y = 6;
 static const double Block_dimension = 0.02; // This is the side of a block in m.
 
 // Definitions for the initial estimates for the values desired to be optimised
-static const double initial_t1 = 0.01;
-static const double initial_t2 = 0.01;
-static const double initial_t3 = 0.59;
-
-static const double initial_angle_x = 0.0;
-static const double initial_angle_y = 0.0;
-static const double initial_angle_z = 0.0;
-
 static const double initial_fx = 950;
 static const double initial_fy = 950;
 static const double initial_cx = 320;
@@ -165,22 +155,27 @@ int main()
 	cv::Mat matrix_B_ = cv::Mat(3, 3, CV_64FC1, matrix_B);
 	cv::Mat rvec;
 	cv::Mat tvec;
-	double camera_extrinsics[total_chessboards_detected][6] = {{0}};
+	std::vector<std::vector<double>> camera_extrinsics;
+	
 
 	for (int z = 0; z != total_chessboards_detected; z++)
 	{
 		cv::solvePnP(matrix_D, Chessboard_corners[z], matrix_B_, cv::Mat(4,1,CV_64FC1,cv::Scalar(0)), rvec, tvec, false);
-		camera_extrinsics[z][0] = rvec.at<double>(0, 0); // axis-angle x
-		camera_extrinsics[z][1] = rvec.at<double>(0, 1); // axis-angle y
-		camera_extrinsics[z][2] = rvec.at<double>(0, 2); // axis-angle z
-		camera_extrinsics[z][3] = tvec.at<double>(0, 0); // t1
-		camera_extrinsics[z][4] = tvec.at<double>(0, 1); // t2
-		camera_extrinsics[z][5] = tvec.at<double>(0, 2); // t3
+
+		std::vector<double> temp;
+		temp.push_back(rvec.at<double>(0, 0)); // axis-angle x
+		temp.push_back(rvec.at<double>(0, 1)); // axis-angle y
+		temp.push_back(rvec.at<double>(0, 2)); // axis-angle z
+		temp.push_back(tvec.at<double>(0, 0)); // t1
+		temp.push_back(tvec.at<double>(0, 1)); // t2
+		temp.push_back(tvec.at<double>(0, 2)); // t3
+		
+		camera_extrinsics.push_back(temp); 
 	}
 
 
 	// Display the initial camera extrinsics multidimentional array
-	for (int z = 0; z != total_chessboards_detected; z++)
+	for (int z = 0; z != camera_extrinsics.size(); z++)
 	{
 		std::cout << "Camera extrinsic: " << z << "\r\n";
 		std::cout << "Initial axis-angle x: " << camera_extrinsics[z][0] << "\r\n";
@@ -189,7 +184,19 @@ int main()
 		std::cout << "Initial t1: " << camera_extrinsics[z][3] << "\r\n";
 		std::cout << "Initial t2: " << camera_extrinsics[z][4] << "\r\n";
 		std::cout << "Initial t3: " << camera_extrinsics[z][5] << "\r\n\n";
-	} 
+	}
+
+
+	// for (int z = 0; z != total_chessboards_detected; z++)
+	// {
+	// 	std::cout << "Camera extrinsic: " << z << "\r\n";
+	// 	std::cout << "Initial axis-angle x: " << camera_extrinsics[z][0] << "\r\n";
+	// 	std::cout << "Initial axis-angle y: " << camera_extrinsics[z][1] << "\r\n";
+	// 	std::cout << "Initial axis-angle z: " << camera_extrinsics[z][2] << "\r\n";
+	// 	std::cout << "Initial t1: " << camera_extrinsics[z][3] << "\r\n";
+	// 	std::cout << "Initial t2: " << camera_extrinsics[z][4] << "\r\n";
+	// 	std::cout << "Initial t3: " << camera_extrinsics[z][5] << "\r\n\n";
+	// } 
 
 
 	///////////// The optimisation code begins from here /////////////
@@ -199,6 +206,7 @@ int main()
 
     // Begin building the problem
     ceres::Problem problem;
+	std::vector<ceres::ResidualBlockId> residual_block_ids;
 
 	for (int z = 0; z != Chessboard_corners.size(); z++)
 	{
@@ -217,12 +225,10 @@ int main()
 			// std::cout << "pixel v: " << image_pixels[1] << "\r\n\n";
 
 			ceres::CostFunction* cost_function = ReProjectionResidual::Create(image_pixels, board_T_point);
-			// double residuals[2];
-			// cost_function(&camera_extrinsics[z][0], camera_intrinsics, residuals);
-			// for (?)
-			//   print residuals[i]
-			problem.AddResidualBlock(cost_function, NULL, &camera_extrinsics[z][0], camera_intrinsics);
+			ceres::ResidualBlockId block_id = problem.AddResidualBlock(cost_function, NULL, &camera_extrinsics[z][0], camera_intrinsics);
+			residual_block_ids.push_back(block_id);
 		}
+
 	}
 
 	ceres::Solver::Options options;
@@ -231,6 +237,18 @@ int main()
 	options.max_num_iterations = 10000;
 	ceres::Solver::Summary summary;
 	ceres::Solve(options, &problem, &summary);
+	std::cout << "\r\n";
+
+	ceres::Problem::EvaluateOptions Options;
+	Options.residual_blocks = residual_block_ids;
+	double total_cost = 0.0;
+	std::vector<double> residuals;
+	problem.Evaluate(Options, &total_cost, &residuals, nullptr, nullptr);
+
+	for (int i = 0; i != residuals.size(); i++)
+	{
+		std::cout << "residual " << i << ": " << residuals[i] << "\r\n";
+	}
 	std::cout << "\r\n";
 
 	// Camera Intrinsics results
@@ -282,7 +300,7 @@ int main()
 		matrix_C[z][2][1] = rotation_matrix[5];
 		matrix_C[z][0][2] = rotation_matrix[6];
 		matrix_C[z][1][2] = rotation_matrix[7];
-		matrix_C[z][2][2] = rotation_matrix[8];
+		matrix_C[z][2][2] = rotation_matrix[8]; 
 		matrix_C[z][0][3] = camera_extrinsics[z][3];
 		matrix_C[z][1][3] = camera_extrinsics[z][4];
 		matrix_C[z][2][3] = camera_extrinsics[z][5];
@@ -354,9 +372,36 @@ int main()
 		}
 	}
 
-	// Display the 2 matrix_A
+
+	// Recreate the images but using the calculated pixel coordinates.
+	std::vector<std::vector<cv::Point2f>> Processed_Chessboard_corners;
+
 	for (int z = 0; z != total_chessboards_detected; z++)
 	{
+		std::vector<cv::Point2f> temp;
+		for (int x = 0; x != Number_of_internal_corners_y * Number_of_internal_corners_x; x++)
+		{
+			double U = calculated_matrix_A[z][0][x] / calculated_matrix_A[z][2][x]; // (s * u) / s
+			double V = calculated_matrix_A[z][1][x] / calculated_matrix_A[z][2][x]; // (s * v) / s
+			temp.push_back(cv::Point2f(U, V));
+		}	
+		Processed_Chessboard_corners.push_back(temp);
+	}
+
+	for (int z = 0; z != total_chessboards_detected; z++)
+	{
+		cv::namedWindow("Optimised Pixel Points");
+		cv::drawChessboardCorners(images[z], patternsize, Processed_Chessboard_corners[z], true);
+		cv::imshow("Optimised Pixel Points", images[z]);
+		cv::waitKey(0); 
+	}
+
+
+/*
+	// Display the 2 matrix_A: both original and calculated
+	for (int z = 0; z != total_chessboards_detected; z++)
+	{
+		std::cout << "////////////////// Image: " << z << " ////////////////// \r\n";
 		for (int i = 0; i != Number_of_internal_corners_y * Number_of_internal_corners_x; i++)
 		{
 			std::cout << "Point number: " << i << "\r\n";
@@ -369,7 +414,9 @@ int main()
 			std::cout << "Pixel v: " << (calculated_matrix_A[z][1][i] / calculated_matrix_A[z][2][i]) << "\r\n\n";
 		}	
 	}
-	
+*/
+
+
 
     return 0;
 }
