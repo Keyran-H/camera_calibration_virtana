@@ -1,0 +1,24 @@
+<?xml version='1.0'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="calibration_base">
+  <link name="calibration_target_link">
+    <inertial>
+      <mass value="50"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="3" ixy="0" ixz="0" iyy="3" iyz="0" izz="3" />
+    </inertial>
+
+    <collision name="collision">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+            <mesh filename="package://camera_calibration_virtana/models/cube.obj" />
+        </geometry>
+    </collision>
+
+      <visual name="visual">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://camera_calibration_virtana/models/cube.obj" />
+        </geometry>
+      </visual>
+    </link>
+</robot>

@@ -1,0 +1,21 @@
+<launch>
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+     <arg name="verbose" value="true"/>
+  </include>
+
+  <param name="board_description" command="$(find xacro)/xacro --inorder '$(find camera_calibration_virtana)/models/checkerboard/box.urdf.xacro'"/>
+
+  <param name="camera_description" command="$(find xacro)/xacro --inorder '$(find camera_calibration_virtana)/models/camera/camera.urdf.xacro'"/>
+
+  <node name="spawn_camera" pkg="gazebo_ros" type="spawn_model"
+        args="-param camera_description -urdf -model camera -x 5.25 -y 0 -z 0.25 -Y 3.1415 " />
+
+
+  <node name="spawn_box" pkg="gazebo_ros" type="spawn_model"
+        args="-param board_description -urdf -model checkerboard -x .5 -y 0 -z 1" />
+
+  <node name="world_tf" pkg="camera_calibration_virtana" type="world_transform_pub"/>
+
+  <node pkg="tf" type="static_transform_publisher" name="image_frame" args="0 0 0 -1.5707 0 -1.5707  camera_link image_link 1" />
+
+</launch>
