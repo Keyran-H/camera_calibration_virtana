@@ -2,6 +2,7 @@
 *include/*
 *launch/*
 *models/*
+*src/*
 calibration_points4.xml
 package.xml
 CMakeLists.txt
