@@ -1,7 +1,7 @@
-*/cfg/*
-*/include/*
-*/launch/*
-*/models/*
+*cfg/*
+*include/*
+*launch/*
+*models/*
 calibration_points4.xml
 package.xml
 CMakeLists.txt
