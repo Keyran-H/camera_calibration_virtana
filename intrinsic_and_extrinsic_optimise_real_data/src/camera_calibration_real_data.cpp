@@ -9,56 +9,57 @@
 #include <vector>
 #include "ceres/ceres.h"
 #include "ceres/rotation.h"
+#include <gflags/gflags.h>
+#include <string>
 
-// Definitions for the dimensions of the calibration board
-static const int Number_of_internal_corners_x = 7;
-static const int Number_of_internal_corners_y = 6;
-static const double Block_dimension = 0.02; // This is the side of a block in m.
+// TODO: Consider forcing the user to enter all the fields incase he/she may have forgotten to enter one.
 
-// Definitions for the initial estimates for the values desired to be optimised
-static const double initial_fx = 950;
-static const double initial_fy = 950;
-static const double initial_cx = 320;
-static const double initial_cy = 240;
+// Definitions for the gflags
+DEFINE_double(fx, 1000, "Used to set an initial estimate for the fx, camera intrinsic");
+DEFINE_double(fy, 1000, "Used to set an initial estimate for the fy, camera intrinsic");
+DEFINE_double(cx, 500, "Used to set an initial estimate for the cx, camera intrinsic");
+DEFINE_double(cy, 500, "Used to set an initial estimate for the cy, camera intrinsic");
+DEFINE_uint64(internal_corners_x, 7, "Used to set the number of internal number of corners for the columns of the calibration board");
+DEFINE_uint64(internal_corners_y, 6, "Used to set the number of internal number of corners for the rows of the calibration board");
+DEFINE_double(block_dimension, 0.02, "Used to set the dimension of a single side of a block from the calibration board in meters");
+DEFINE_string(read_directory, "../Calibration_images_numbered/image%02d.jpg", "Used to set the directory of the folder containing the calibration images and also the naming convention of the images in that folder");
+DEFINE_string(write_directory, "../Processed_calibration_images_numbered/", "Used to set the directory of the folder to write the calibration images to");
 
-// Data Structure definition
 struct ReProjectionResidual
 { 
-	// Put the actual parameters that will not be optimised right here (this would be the intrinsics,the uv pixel points and board_T_cam).
-	ReProjectionResidual(const double *pixel_points, const double *board_T_point)
+	ReProjectionResidual(const double *pixel_points, const double *single_calibration_board_point)
 	{
 		// Initialise the pixel points
-		observed_pixel_points_[0] = pixel_points[0]; // u
-		observed_pixel_points_[1] = pixel_points[1]; // v
+		observed_pixel_points[0] = pixel_points[0]; // u
+		observed_pixel_points[1] = pixel_points[1]; // v
 
-		// Initialise the board_T_point
-		board_T_point_[0] = board_T_point[0]; // X
-		board_T_point_[1] = board_T_point[1]; // Y
-		board_T_point_[2] = board_T_point[2]; // Z
+		// Initialise the calibration board point
+		calibration_board_point[0] = single_calibration_board_point[0]; // X
+		calibration_board_point[1] = single_calibration_board_point[1]; // Y
+		calibration_board_point[2] = single_calibration_board_point[2]; // Z
 	}
 
-	// For this template, put all of the parameters to optimise and the residual here.
 	template <typename T>
-	bool operator()(const T* const camera_extrinsics, const T* const camera_intrinsics, T* residuals)
+	bool operator()(const T* const cam_T_board, const T* const camera_intrinsics, T* residuals)
 	const
 	{
 		// compute projective coordinates: p = RX + t.
-        // camera_extrinsics[0, 1, 2]: axis-angle
-        // camera_extrinsics[3, 4, 5]: translation
-		const T R_angle_axis[3] = {T(camera_extrinsics[0]), T(camera_extrinsics[1]), T(camera_extrinsics[2])};
-		const T point[3] = {T(board_T_point_[0]), T(board_T_point_[1]), T(board_T_point_[2])};
+    // cam_T_board[0, 1, 2]: axis-angle
+    // cam_T_board[3, 4, 5]: translation
+		const T R_angle_axis[3] = {T(cam_T_board[0]), T(cam_T_board[1]), T(cam_T_board[2])};
+		const T point[3] = {T(calibration_board_point[0]), T(calibration_board_point[1]), T(calibration_board_point[2])};
 		T p[3];
 
-		// AngleAxisRotatePoint used to rotate the board_T_point about the axis of rotation which is set 
-		// as the R component of the camera extrinsic matric after the rotation matrix to angle axis conversion
+		// AngleAxisRotatePoint used to rotate the calibration board point about the axis of rotation which is set 
+		// as the R component of the camera extrinsic matric, after the rotation matrix to angle axis conversion
 		ceres::AngleAxisRotatePoint(R_angle_axis, point, p);
 
 		// AngleAxisRotatePoint gives the "RX" therefore it must be translated by "t" (from camera extrinsics) to give "p".
-		p[0] += camera_extrinsics[3]; // X component of camera to calibration point
-		p[1] += camera_extrinsics[4]; // Y component of camera to calibration point
-		p[2] += camera_extrinsics[5]; // Z component of camera to calibration point
+		p[0] += cam_T_board[3]; // X component of camera to calibration point
+		p[1] += cam_T_board[4]; // Y component of camera to calibration point
+		p[2] += cam_T_board[5]; // Z component of camera to calibration point
 
-		// The projected pixel coordinates would now be computed. (for now i am not including distortion)
+		// The projected pixel coordinates are computed here.
 		T up = p[0] / p[2];
 		T vp = p[1] / p[2];
 
@@ -67,37 +68,57 @@ struct ReProjectionResidual
 		T projected_v = vp * camera_intrinsics[1] + camera_intrinsics[3];
 
 		// The residuals are calculated here
-		residuals[0] = projected_u - T(observed_pixel_points_[0]);
-		residuals[1] = projected_v - T(observed_pixel_points_[1]);
+		residuals[0] = projected_u - T(observed_pixel_points[0]);
+		residuals[1] = projected_v - T(observed_pixel_points[1]);
 
 		return true;
 	}
 
 	// Factory to hide the construction of the CostFunction object from the client code.
-	static ceres::CostFunction *Create(const double *pixel_points, const double *board_T_point)
+	static ceres::CostFunction *Create(const double *pixel_points, const double *calibration_board_point)
 	{
 		return (new ceres::AutoDiffCostFunction<ReProjectionResidual, 2, 6, 4>(
-			new ReProjectionResidual(pixel_points, board_T_point)));
+			new ReProjectionResidual(pixel_points, calibration_board_point)));
 	}
 
 	// Declare struct variables
 	private:
-		double observed_pixel_points_[3];
-		double board_T_point_[4];
+		double observed_pixel_points[2];
+		double calibration_board_point[3];
 };
 
-int main()
+int main(int argc, char **argv)
 {
-	unsigned int count = 0;
-	unsigned int num_of_images = 0;
-	unsigned int total_chessboards_detected = 0;
-	cv::VideoCapture cap("../Calibration_images_numbered/image%02d.jpg");
+  gflags::ParseCommandLineFlags(&argc, &argv, false);
 
-	cv::Size patternsize = cv::Size(7, 6); // (width, height) or (columns, rows) or (X, Y)
+  // Definitions for the initial estimates for the parameters desired to be optimised.
+  const double kInitial_fx = FLAGS_fx;
+  const double kInitial_fy = FLAGS_fy;
+  const double kInitial_cx = FLAGS_cx;
+  const double kInitial_cy = FLAGS_cy;
+
+  // Definitions for the dimensions of the calibration board.
+  const int kNumber_of_internal_corners_x = FLAGS_internal_corners_x;
+  const int kNumber_of_internal_corners_y = FLAGS_internal_corners_y;
+  const double kBlock_dimension = FLAGS_block_dimension;
+
+  // Point to the folder to read images
+  cv::VideoCapture cap(FLAGS_read_directory);
+
+  // Point to the folder to write images
+  std::string directory = FLAGS_write_directory;
+
+  ///////////////////////////////////// Input data processing code implementation begin here /////////////////////////////////////
+
+  unsigned int num_of_calibration_points = kNumber_of_internal_corners_x * kNumber_of_internal_corners_y;
+  unsigned int num_of_images = 0;
+  unsigned int total_chessboards_detected = 0;
+ 
+	cv::Size patternsize = cv::Size(kNumber_of_internal_corners_x, kNumber_of_internal_corners_y); // (width, height) or (columns, rows) or (X, Y)
 	std::vector<cv::Mat> images;
-	std::vector<std::vector<cv::Point2f>> Chessboard_corners;
+	std::vector<std::vector<cv::Point2f>> chessboard_corners;
 
-	// This loop goes into the folder defined previously and reads the images one by one.
+  // This loop goes into the folder defined by FLAGS_read_directory and reads the images one by one.
 	// The files MUST be of the same type and have the same name.
 	// The files MUST have the same name and have a consecutive numbering scheme
 	// For example: image01.jpg, image02.jpg, image03.jpg ...
@@ -108,7 +129,6 @@ int main()
 		cap.read(img);
 		if(img.empty())
 		{
-			std::cout << "End of Sequence \r\n";
 			break;
 		}
 		
@@ -118,120 +138,89 @@ int main()
 
 		if(chessboard_found)
 		{
-			std::cout << "The Chessboard was found within the image: " << num_of_images << "\r\n";
 			total_chessboards_detected++;
 			images.push_back(img); // Only store the images where the Chessboards were found.
-			Chessboard_corners.push_back(corners); // Store the calibration points from the image but only for the chessboards that were found.
-
-			// cv::namedWindow("Display window");
-			// cv::drawChessboardCorners(img, patternsize, corners, chessboard_found);
-			// cv::imshow("Dsplay Window", img);
-			// cv::waitKey(0);
+			chessboard_corners.push_back(corners); // Store the calibration points from the image but only for the chessboards that were found.
 		}
-		else
-		{
-			std::cout << "The Chessboard was not found within the image: " << num_of_images << "\r\n";
-		}
+		
 		num_of_images++;
 	}
 
-	std::cout << "Finished reading from the folder! \r\n";
 	std::cout << "The total number of images found: " << num_of_images << "\r\n";
-	std::cout << "The number of images with Chess boards within the image: " << total_chessboards_detected << "\r\n\n";
+	std::cout << "The number of images with Chess boards detected: " << total_chessboards_detected << "\r\n\n";
 
-	// The calibration board is generated here and is regarded as matrix D
-	std::vector<cv::Point3f> matrix_D;
+	// The calibration board is generated here
+	std::vector<std::array<double, 3>> true_calibration_board_points;
  
-	for (int y = 0; y != Number_of_internal_corners_y; y++)
+	for (int y = 0; y != kNumber_of_internal_corners_y; y++)
 	{
-		for (int x = 0; x != Number_of_internal_corners_x; x++)
+		for (int x = 0; x != kNumber_of_internal_corners_x; x++)
 		{
-			matrix_D.push_back(cv::Point3f(x * Block_dimension, y * Block_dimension, 0 * Block_dimension));
+			std::array<double, 3> true_calibration_board_points_builder;
+
+			true_calibration_board_points_builder[0] = x * kBlock_dimension;
+			true_calibration_board_points_builder[1] = y * kBlock_dimension;
+			true_calibration_board_points_builder[2] = 0 * kBlock_dimension;
+
+			true_calibration_board_points.push_back(true_calibration_board_points_builder);
 		}
 	}
 
-	// The solvePnP function is be used here to determine the initial estimates for the camera extrinsics for each image.
-	double matrix_B[3][3] = {{initial_fx, 0, initial_cx}, {0, initial_fy, initial_cy}, {0, 0, 1} };
-	cv::Mat matrix_B_ = cv::Mat(3, 3, CV_64FC1, matrix_B);
-	cv::Mat rvec;
-	cv::Mat tvec;
-	std::vector<std::vector<double>> camera_extrinsics;
+  // The solvePnP function is used here to determine the initial estimates for the cam_T_board for each image.
+	double initial_estimates[3][3] = {{kInitial_fx, 0, kInitial_cx}, {0, kInitial_fy, kInitial_cy}, {0, 0, 1} };
+  cv::Mat initial_estimates_matrix = cv::Mat(3, 3, CV_64FC1, initial_estimates);
+  std::vector<std::array<double, 6>> cam_T_board;
+	cv::Mat cam_r_board;
+	cv::Mat cam_t_board;
 	
+	// Convert the true_calibration_board_points into an opencv true_calibration_board_points_matrix to be used with solvePnP
+	cv::Mat true_calibration_board_points_matrix(num_of_calibration_points, 3, CV_64FC1);
 
+	for (int y = 0; y != true_calibration_board_points_matrix.rows; y++)
+	{
+		for (int x = 0; x != true_calibration_board_points_matrix.cols; x++)
+		{
+			true_calibration_board_points_matrix.at<double>(y, x) = true_calibration_board_points.at(y).at(x);
+		}
+	}
+	
 	for (int z = 0; z != total_chessboards_detected; z++)
 	{
-		cv::solvePnP(matrix_D, Chessboard_corners[z], matrix_B_, cv::Mat(4,1,CV_64FC1,cv::Scalar(0)), rvec, tvec, false);
+		cv::solvePnP(true_calibration_board_points_matrix, chessboard_corners[z], initial_estimates_matrix, cv::Mat(4,1,CV_64FC1,cv::Scalar(0)), cam_r_board, cam_t_board, false);
 
-		std::vector<double> temp;
-		temp.push_back(rvec.at<double>(0, 0)); // axis-angle x
-		temp.push_back(rvec.at<double>(0, 1)); // axis-angle y
-		temp.push_back(rvec.at<double>(0, 2)); // axis-angle z
-		temp.push_back(tvec.at<double>(0, 0)); // t1
-		temp.push_back(tvec.at<double>(0, 1)); // t2
-		temp.push_back(tvec.at<double>(0, 2)); // t3
-		
-		camera_extrinsics.push_back(temp); 
+		std::array<double, 6> cam_T_board_builder;
+
+		cam_T_board_builder[0] = cam_r_board.at<double>(0, 0); // axis-angle x
+		cam_T_board_builder[1] = cam_r_board.at<double>(0, 1); // axis-angle y
+		cam_T_board_builder[2] = cam_r_board.at<double>(0, 2); // axis-angle z
+		cam_T_board_builder[3] = cam_t_board.at<double>(0, 0); // t1
+		cam_T_board_builder[4] = cam_t_board.at<double>(0, 1); // t2
+		cam_T_board_builder[5] = cam_t_board.at<double>(0, 2); // t3
+
+		cam_T_board.push_back(cam_T_board_builder); 
 	}
 
+  ///////////////////////////////////// Optimisation code begin here /////////////////////////////////////
 
-	// Display the initial camera extrinsics multidimentional array
-	for (int z = 0; z != camera_extrinsics.size(); z++)
+  // Set the initial values for the mutable parameters. 
+  double camera_intrinsics[4] = {kInitial_fx, kInitial_fy, kInitial_cx, kInitial_cy};
+
+  // Begin building the problem
+  ceres::Problem problem;
+
+	for (int z = 0; z != chessboard_corners.size(); z++)
 	{
-		std::cout << "Camera extrinsic: " << z << "\r\n";
-		std::cout << "Initial axis-angle x: " << camera_extrinsics[z][0] << "\r\n";
-		std::cout << "Initial axis-angle y: " << camera_extrinsics[z][1] << "\r\n";
-		std::cout << "Initial axis-angle z: " << camera_extrinsics[z][2] << "\r\n";
-		std::cout << "Initial t1: " << camera_extrinsics[z][3] << "\r\n";
-		std::cout << "Initial t2: " << camera_extrinsics[z][4] << "\r\n";
-		std::cout << "Initial t3: " << camera_extrinsics[z][5] << "\r\n\n";
-	}
-
-
-	// for (int z = 0; z != total_chessboards_detected; z++)
-	// {
-	// 	std::cout << "Camera extrinsic: " << z << "\r\n";
-	// 	std::cout << "Initial axis-angle x: " << camera_extrinsics[z][0] << "\r\n";
-	// 	std::cout << "Initial axis-angle y: " << camera_extrinsics[z][1] << "\r\n";
-	// 	std::cout << "Initial axis-angle z: " << camera_extrinsics[z][2] << "\r\n";
-	// 	std::cout << "Initial t1: " << camera_extrinsics[z][3] << "\r\n";
-	// 	std::cout << "Initial t2: " << camera_extrinsics[z][4] << "\r\n";
-	// 	std::cout << "Initial t3: " << camera_extrinsics[z][5] << "\r\n\n";
-	// } 
-
-
-	///////////// The optimisation code begins from here /////////////
-
-    // Set the initial values for the mutable parameters.
-    double camera_intrinsics[4] = {initial_fx, initial_fy, initial_cx, initial_cy};
-
-    // Begin building the problem
-    ceres::Problem problem;
-	std::vector<ceres::ResidualBlockId> residual_block_ids;
-
-	for (int z = 0; z != Chessboard_corners.size(); z++)
-	{
-		// std::cout << "////////////////////////// Image number: " << z << " ////////////////////////// \r\n";	
-		
-		for (int i = 0; i != Chessboard_corners[z].size(); i++)
+		for (int i = 0; i != chessboard_corners[z].size(); i++)
 		{
-			double board_T_point[3] = {matrix_D[i].x, matrix_D[i].y, matrix_D[i].z}; //This is the calibration point of the format: X,Y,Z
-			double image_pixels[2] = {Chessboard_corners[z][i].x, Chessboard_corners[z][i].y}; //This is the image point of the format: u, v.
+			double calibration_board_point[3] = {true_calibration_board_points[i][0], true_calibration_board_points[i][1], true_calibration_board_points[i][2]}; //This is the calibration point of the format: X,Y,Z
+			double image_pixels[2] = {chessboard_corners[z][i].x, chessboard_corners[z][i].y}; //This is the image point of the format: u, v.
 
-			// std::cout << "Calibration point number: " << i << "\r\n";
-			// std::cout << "XYZ: " << board_T_point[0] << ", " << board_T_point[1] << ", " << board_T_point[2] << "\r\n\n";
-
-			// std::cout << "Pixel point number: " << i << "\r\n";
-			// std::cout << "pixel u: " << image_pixels[0] << "\r\n";
-			// std::cout << "pixel v: " << image_pixels[1] << "\r\n\n";
-
-			ceres::CostFunction* cost_function = ReProjectionResidual::Create(image_pixels, board_T_point);
-			ceres::ResidualBlockId block_id = problem.AddResidualBlock(cost_function, NULL, &camera_extrinsics[z][0], camera_intrinsics);
-			residual_block_ids.push_back(block_id);
+			ceres::CostFunction* cost_function = ReProjectionResidual::Create(image_pixels, calibration_board_point);
+			problem.AddResidualBlock(cost_function, NULL, &cam_T_board[z][0], camera_intrinsics);
 		}
-
 	}
 
-	ceres::Solver::Options options;
+  ceres::Solver::Options options;
 	options.linear_solver_type = ceres::DENSE_SCHUR;
 	options.minimizer_progress_to_stdout = true;
 	options.max_num_iterations = 10000;
@@ -239,184 +228,217 @@ int main()
 	ceres::Solve(options, &problem, &summary);
 	std::cout << "\r\n";
 
-	ceres::Problem::EvaluateOptions Options;
-	Options.residual_blocks = residual_block_ids;
-	double total_cost = 0.0;
-	std::vector<double> residuals;
-	problem.Evaluate(Options, &total_cost, &residuals, nullptr, nullptr);
-
-	for (int i = 0; i != residuals.size(); i++)
-	{
-		std::cout << "residual " << i << ": " << residuals[i] << "\r\n";
-	}
-	std::cout << "\r\n";
-
-	// Camera Intrinsics results
+  // Camera Intrinsics results
 	std::cout << "CAMERA INTRINSICS RESULTS: \r\n\n";
-	std::cout << "Initial fx: " << initial_fx << "\r\n";
+	std::cout << "Initial fx: " << kInitial_fx << "\r\n";
 	std::cout << "Final   fx: " << camera_intrinsics[0]  << "\r\n\n";
 
-	std::cout << "Initial fy: " << initial_fy << "\r\n";
+	std::cout << "Initial fy: " << kInitial_fy << "\r\n";
 	std::cout << "Final   fy: " << camera_intrinsics[1]  << "\r\n\n";
 
-	std::cout << "Initial cx: " << initial_cx << "\r\n";
+	std::cout << "Initial cx: " << kInitial_cx << "\r\n";
 	std::cout << "Final   cx: " << camera_intrinsics[2]  << "\r\n\n";
 
-	std::cout << "Initial cy: " << initial_cy << "\r\n";
+	std::cout << "Initial cy: " << kInitial_cy << "\r\n";
 	std::cout << "Final   cy: " << camera_intrinsics[3]  << "\r\n\n";
 
+  // Camera Extrinsics results
+  std::cout << "CAMERA EXTRINSICS RESULTS:  \r\n\n";
+  std::cout << "Format of results: axis-angle x, axis-angle y, axis-angle z, t1, t2, t3.  \r\n";
 	for (int z = 0; z != total_chessboards_detected; z++)
 	{
-		// Camera Extrinsics results
-		std::cout << "CAMERA EXTRINSICS RESULTS FOR IMAGE: " << z << " \r\n";
-		std::cout << "Final   axis-angle x: " << camera_extrinsics[z][0]  << "\r\n";
-		std::cout << "Final   axis-angle y: " << camera_extrinsics[z][1]  << "\r\n";
-		std::cout << "Final   axis-angle z: " << camera_extrinsics[z][2]  << "\r\n";
-		std::cout << "Final   t1: " << camera_extrinsics[z][3]  << "\r\n";
-		std::cout << "Final   t2: " << camera_extrinsics[z][4]  << "\r\n";
-		std::cout << "Final   t3: " << camera_extrinsics[z][5]  << "\r\n\n";
+    std::cout << "Camera extrinsics for image " << z << ": ";
+		std::cout << cam_T_board[z][0] << ", ";
+		std::cout << cam_T_board[z][1] << ", ";
+		std::cout << cam_T_board[z][2] << ", ";
+		std::cout << cam_T_board[z][3] << ", ";
+		std::cout << cam_T_board[z][4] << ", ";
+		std::cout << cam_T_board[z][5]  << " \r\n";
 	}
 
-	// This step is not necessary but it is being done to determine if the optimised camera intrinsics and
-	// extrinsics returns correct pixel points for the calibration ponits.
+  ///////////////////////////////////// Code for analysing optimised camera intrinsics and extrinsics begin here /////////////////////////////////////
 
-	double matrix_B__[3][3] = {{camera_intrinsics[0], 0, camera_intrinsics[2]}, {0, camera_intrinsics[1], camera_intrinsics[3]}, {0, 0, 1} };
+  // Create the camera intrinsics matrix using the optimised values and convert it to an opencv matrix
+  double optimised_camera_intrinsics[3][3] = {{camera_intrinsics[0], 0, camera_intrinsics[2]}, {0, camera_intrinsics[1], camera_intrinsics[3]}, {0, 0, 1} };
+  cv::Mat optimised_camera_intrinsics_matrix = cv::Mat(3, 3, CV_64FC1, optimised_camera_intrinsics);
 
-	// For matrix_C I have to convert the axis angle into the 9x9 rotation matrix.
+  // Create the 3D vector of cam_T_boards matrices using the optimised values
+  std::vector<std::array<std::array<double, 4>, 3>> optimised_cam_T_board;
 
-	double matrix_C[total_chessboards_detected][3][4];
+  for (int z = 0; z != total_chessboards_detected; z++)
+  {
+    std::array<std::array<double, 4>, 3> optimised_cam_T_board_builder;
 
-	for (int z = 0; z != total_chessboards_detected; z++)
-	{
-		double angle_axis[3] = {camera_extrinsics[z][0], camera_extrinsics[z][1],  camera_extrinsics[z][2]};
+    double angle_axis[3] = {cam_T_board[z][0], cam_T_board[z][1],  cam_T_board[z][2]};
 		double rotation_matrix[9];
 		ceres::AngleAxisToRotationMatrix(&angle_axis[0], &rotation_matrix[0]);
 
-		matrix_C[z][0][0] = rotation_matrix[0];
-		matrix_C[z][1][0] = rotation_matrix[1];
-		matrix_C[z][2][0] = rotation_matrix[2];
-		matrix_C[z][0][1] = rotation_matrix[3];
-		matrix_C[z][1][1] = rotation_matrix[4];
-		matrix_C[z][2][1] = rotation_matrix[5];
-		matrix_C[z][0][2] = rotation_matrix[6];
-		matrix_C[z][1][2] = rotation_matrix[7];
-		matrix_C[z][2][2] = rotation_matrix[8]; 
-		matrix_C[z][0][3] = camera_extrinsics[z][3];
-		matrix_C[z][1][3] = camera_extrinsics[z][4];
-		matrix_C[z][2][3] = camera_extrinsics[z][5];
+		optimised_cam_T_board_builder[0][0] = rotation_matrix[0];
+		optimised_cam_T_board_builder[1][0] = rotation_matrix[1];
+		optimised_cam_T_board_builder[2][0] = rotation_matrix[2];
+		optimised_cam_T_board_builder[0][1] = rotation_matrix[3];
+		optimised_cam_T_board_builder[1][1] = rotation_matrix[4];
+		optimised_cam_T_board_builder[2][1] = rotation_matrix[5];
+		optimised_cam_T_board_builder[0][2] = rotation_matrix[6];
+		optimised_cam_T_board_builder[1][2] = rotation_matrix[7];
+		optimised_cam_T_board_builder[2][2] = rotation_matrix[8]; 
+		optimised_cam_T_board_builder[0][3] = cam_T_board[z][3];
+		optimised_cam_T_board_builder[1][3] = cam_T_board[z][4];
+		optimised_cam_T_board_builder[2][3] = cam_T_board[z][5];
 
-	}
+    // The cam_T_board matrix is stored here
+    optimised_cam_T_board.push_back(optimised_cam_T_board_builder);
+  }
 
-	// The matrix_D is recomputed here in a format acceptable for the matrix multiplication.
-	double matrix_D_[4][Number_of_internal_corners_y * Number_of_internal_corners_x];
+  // Convert the 3D vector of cam_T_boards into a vector of opencv cam_T_board matrices
+  std::vector<cv::Mat> optimised_cam_T_board_matrix;
 
-	count = 0;
-	for (int y = 0; y != Number_of_internal_corners_y; y++)
-	{
-		for (int x = 0; x != Number_of_internal_corners_x; x++)
+  for (int z = 0; z != total_chessboards_detected; z++)
+  {
+		// Create a temporary matrix to build the opencv matrix for a camera extrinsic.
+    cv::Mat optimised_cam_T_board_matrix_builder(3, 4, CV_64FC1);
+
+		// Build the temporary matrix
+		for (int y = 0; y != optimised_cam_T_board_matrix_builder.rows; y++)
 		{
-			matrix_D_[0][count] = x * Block_dimension;
-			matrix_D_[1][count] = y * Block_dimension;
-			matrix_D_[2][count] = 0 * Block_dimension;
-			matrix_D_[3][count] = 1;
-
-			count++;
-		}	
-	}
-
-	// The multidimensional arrays are converted into OpenCV matrices so that the multiplication can be done.
-	cv::Mat matrix_A[total_chessboards_detected];
-	cv::Mat matrix_B___ = cv::Mat(3, 3, CV_64FC1, matrix_B__);
-	std::vector<cv::Mat> matrix_C_;
-	cv::Mat matrix_D__ = cv::Mat(4, Number_of_internal_corners_y * Number_of_internal_corners_x, CV_64FC1, matrix_D_);
-	
-
-	for (int z = 0; z != total_chessboards_detected; z++)
-	{
-		matrix_C_.push_back(cv::Mat(3, 4, CV_64FC1, &matrix_C[z][0][0]));
-		//std::cout << "matrix_C_: \r\n" << matrix_C_[z];
-	}
-
-	std::cout << "\r\n";
-
-
-	for (int z = 0; z != total_chessboards_detected; z++)
-	{
-		matrix_A[z] = matrix_B___ * matrix_C_[z] * matrix_D__;
-		// std::cout << "matrix_A: \r\n" << matrix_A[z];
-		// std::cout << "\r\n";
-	}
-
-	// Display the real and calculated matrix A here. 
-	double true_matrix_A[total_chessboards_detected][2][Number_of_internal_corners_y * Number_of_internal_corners_x];
-
-	for (int z = 0; z != total_chessboards_detected; z++)
-	{
-		for (int i = 0; i != Number_of_internal_corners_y * Number_of_internal_corners_x; i++)
-		{
-			true_matrix_A[z][0][i] = Chessboard_corners[z][i].x;
-			true_matrix_A[z][1][i] = Chessboard_corners[z][i].y;
-		}
-	}
-
-	double calculated_matrix_A[total_chessboards_detected][3][Number_of_internal_corners_y * Number_of_internal_corners_x];
-
-	for (int z = 0; z != total_chessboards_detected; z++)
-	{
-		for (int y = 0; y != 3; y++)
-		{
-			for (int x = 0; x != Number_of_internal_corners_y * Number_of_internal_corners_x; x++)
+			for (int x = 0; x != optimised_cam_T_board_matrix_builder.cols; x++)
 			{
-				calculated_matrix_A[z][y][x] = matrix_A[z].at<double>(y,x);
-			}	
+				optimised_cam_T_board_matrix_builder.at<double>(y, x) = optimised_cam_T_board[z].at(y).at(x);
+			}
 		}
-	}
 
+		// Push the temporary matrix in the vector of opencv matrices
+		optimised_cam_T_board_matrix.push_back(optimised_cam_T_board_matrix_builder);
+  }
 
-	// Recreate the images but using the calculated pixel coordinates.
-	std::vector<std::vector<cv::Point2f>> Processed_Chessboard_corners;
+	// The calibration board matrix that was generated previously must be transposed in order to matrix multiply
+	cv::Mat true_calibration_board_points_matrix_transpose = true_calibration_board_points_matrix.t();
+
+	// The current dimension of the true_calibration_board_points_matrix_transpose is a 3x42 but in order to be multiplied in the equation
+	// it must be a 4x42. A row of ones would be inserted as the last row.
+
+	cv::Mat row = cv::Mat::ones(1, num_of_calibration_points, CV_64FC1); // This is a row of ones
+	true_calibration_board_points_matrix_transpose.push_back(row);
+
+	// The new image pixels based on the optimised camera intrinsics and cam_T_boards would be computed here
+	std::vector<cv::Mat> Optimised_image_pixels;
 
 	for (int z = 0; z != total_chessboards_detected; z++)
 	{
-		std::vector<cv::Point2f> temp;
-		for (int x = 0; x != Number_of_internal_corners_y * Number_of_internal_corners_x; x++)
+		cv::Mat Optimised_image_pixels_builder;
+		Optimised_image_pixels_builder = optimised_camera_intrinsics_matrix * optimised_cam_T_board_matrix[z] * true_calibration_board_points_matrix_transpose; 
+
+		Optimised_image_pixels.push_back(Optimised_image_pixels_builder);
+	}
+	
+	// Create the processed chess board corners (from the optimised camera intrinsics and cam_T_boards).
+  // This step is necessary to get rid of the scaling factor, s.
+	std::vector<std::vector<cv::Point2f>> processed_chessboard_corners; 
+
+	for (int z = 0; z != total_chessboards_detected; z++)
+	{
+		std::vector<cv::Point2f> processed_chessboard_corners_builder;
+		for (int x = 0; x != num_of_calibration_points; x++)
 		{
-			double U = calculated_matrix_A[z][0][x] / calculated_matrix_A[z][2][x]; // (s * u) / s
-			double V = calculated_matrix_A[z][1][x] / calculated_matrix_A[z][2][x]; // (s * v) / s
-			temp.push_back(cv::Point2f(U, V));
+			double U = Optimised_image_pixels[z].at<double>(0, x) / Optimised_image_pixels[z].at<double>(2, x); // (s * u) / s
+			double V = Optimised_image_pixels[z].at<double>(1, x) / Optimised_image_pixels[z].at<double>(2, x); // (s * v) / s
+			processed_chessboard_corners_builder.push_back(cv::Point2f(U, V));
 		}	
-		Processed_Chessboard_corners.push_back(temp);
+		processed_chessboard_corners.push_back(processed_chessboard_corners_builder);
 	}
+
+	// Loops used to compute some results comparing the true chessboard corners to the optimised chessboard corners
+	std::vector<double> max_pixel_error;                        // Store the actual calculated max error
+	std::vector<cv::Point2f> max_pixel_error_calibration_point; // Store coordinates of the calibration point where the max pixel error occurred
+	std::vector<double> min_pixel_error;                        // Store the actual calculated min error
+	std::vector<cv::Point2f> min_pixel_error_calibration_point; // Store coordinates of the calibration point where the min pixel error occurred
+	std::vector<double> rms_error;
+
+  // The code finds the average error for each calibration point by finding the average of the squares for the U and V errors.
+  // The code then determines which calibration point had the max and min average error. After this is done
+  // The rms error for each image is found by finding the sum of squares of all the U and V errors (for all calibration points),
+  // then dividing by the number of calibration points and then finding the square root.
 
 	for (int z = 0; z != total_chessboards_detected; z++)
 	{
-		cv::namedWindow("Optimised Pixel Points");
-		cv::drawChessboardCorners(images[z], patternsize, Processed_Chessboard_corners[z], true);
-		cv::imshow("Optimised Pixel Points", images[z]);
-		cv::waitKey(0); 
-	}
+		double image_max_pixel_error = 0;
+		double image_min_pixel_error = 0;
+		double error_accumulator = 0;
+		cv::Point2f max_pixel_error_calibration_point_coordinate;
+		cv::Point2f min_pixel_error_calibration_point_coordinate;
 
-
-/*
-	// Display the 2 matrix_A: both original and calculated
-	for (int z = 0; z != total_chessboards_detected; z++)
-	{
-		std::cout << "////////////////// Image: " << z << " ////////////////// \r\n";
-		for (int i = 0; i != Number_of_internal_corners_y * Number_of_internal_corners_x; i++)
+		for (int i = 0; i != num_of_calibration_points; i++)
 		{
-			std::cout << "Point number: " << i << "\r\n";
-			std::cout << "Real: \r\n";
-			std::cout << "Pixel u: " << true_matrix_A[z][0][i] << "\r\n";
-			std::cout << "Pixel v: " << true_matrix_A[z][1][i] << "\r\n";
+			double error_u = chessboard_corners[z][i].x - processed_chessboard_corners[z][i].x;
+			double error_v = chessboard_corners[z][i].y - processed_chessboard_corners[z][i].y;
 
-			std::cout << "Calculated: \r\n";
-			std::cout << "Pixel u: " << (calculated_matrix_A[z][0][i] / calculated_matrix_A[z][2][i]) << "\r\n";
-			std::cout << "Pixel v: " << (calculated_matrix_A[z][1][i] / calculated_matrix_A[z][2][i]) << "\r\n\n";
-		}	
+			double error_u_sq = pow(error_u, 2);
+			double error_v_sq = pow(error_v, 2);
+
+			double avg_error = 0.5 * (error_u_sq + error_v_sq);
+			error_accumulator = error_v_sq + error_v_sq + error_accumulator;
+
+      // Assume the first pixel read has the highest and lowest error.
+			if (i == 0)
+			{
+				image_max_pixel_error = avg_error;
+				image_min_pixel_error = avg_error;
+
+				max_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
+				max_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
+
+				min_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
+				min_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
+			}
+
+			if (avg_error > image_max_pixel_error)
+			{
+				image_max_pixel_error = avg_error;
+				max_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
+				max_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
+			}
+
+			if (avg_error < image_min_pixel_error)
+			{
+				image_min_pixel_error = avg_error;
+				min_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
+				min_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
+			}
+		}
+		
+		double error_accumulator_avg = error_accumulator / num_of_calibration_points;
+		double rms_error_image = sqrt(error_accumulator_avg);
+
+		max_pixel_error.push_back(image_max_pixel_error);
+		min_pixel_error.push_back(image_min_pixel_error);
+		rms_error.push_back(rms_error_image);
+		max_pixel_error_calibration_point.push_back(max_pixel_error_calibration_point_coordinate);
+		min_pixel_error_calibration_point.push_back(min_pixel_error_calibration_point_coordinate);
+
 	}
-*/
+	
+  // Display the results to the user
+	std::cout << "\r\nERROR RESULTS: \r\n\n";
+	for (int z = 0; z != total_chessboards_detected; z++)
+	{
+		std::cout << "Image " << z << ": \r\n";
+		std::cout << "Max avg pixel error: " << max_pixel_error[z] << "\r\n";
+		std::cout << "Max avg pixel error location (u, v): " << max_pixel_error_calibration_point[z].x << ", " << max_pixel_error_calibration_point[z].y << "\r\n";
+		std::cout << "Min avg pixel error: " << min_pixel_error[z] << "\r\n";
+		std::cout << "Min avg pixel error location (u, v): " << min_pixel_error_calibration_point[z].x << ", " << min_pixel_error_calibration_point[z].y << "\r\n";
+		std::cout << "Image error rms: " << rms_error[z] << "\r\n\n";
+	}
 
+  // Superimpose the processed chessboard corners on the calibration images and write images to disk
+	for (int z = 0; z != total_chessboards_detected; z++)
+	{
+		char filename[50];
+		sprintf(filename, "image%02d.jpg", z); 
+		cv::drawChessboardCorners(images[z], patternsize, processed_chessboard_corners[z], true);
+    std::string full_directory = directory + filename;
+    
+		imwrite(full_directory.c_str(), images[z]);
+	}
 
-
-    return 0;
+  return 0;
 }
