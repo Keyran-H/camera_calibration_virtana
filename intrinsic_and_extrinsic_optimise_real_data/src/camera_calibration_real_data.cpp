@@ -12,18 +12,21 @@
 #include <gflags/gflags.h>
 #include <string>
 
-// TODO: Consider forcing the user to enter all the fields incase he/she may have forgotten to enter one.
+// TODO: Consider forcing the user to enter all the fields incase he/she may have forgotten to enter one. Perhaps tell user which fields he did not enter as a warning.
 
 // Definitions for the gflags
-DEFINE_double(fx, 1000, "Used to set an initial estimate for the fx, camera intrinsic");
-DEFINE_double(fy, 1000, "Used to set an initial estimate for the fy, camera intrinsic");
-DEFINE_double(cx, 500, "Used to set an initial estimate for the cx, camera intrinsic");
-DEFINE_double(cy, 500, "Used to set an initial estimate for the cy, camera intrinsic");
+DEFINE_double(fx, 900, "Used to set an initial estimate for the fx, camera intrinsic");
+DEFINE_double(fy, 900, "Used to set an initial estimate for the fy, camera intrinsic");
+DEFINE_double(cx, 320, "Used to set an initial estimate for the cx, camera intrinsic");
+DEFINE_double(cy, 240, "Used to set an initial estimate for the cy, camera intrinsic");
 DEFINE_uint64(internal_corners_x, 7, "Used to set the number of internal number of corners for the columns of the calibration board");
 DEFINE_uint64(internal_corners_y, 6, "Used to set the number of internal number of corners for the rows of the calibration board");
 DEFINE_double(block_dimension, 0.02, "Used to set the dimension of a single side of a block from the calibration board in meters");
-DEFINE_string(read_directory, "../Calibration_images_numbered/image%02d.jpg", "Used to set the directory of the folder containing the calibration images and also the naming convention of the images in that folder");
-DEFINE_string(write_directory, "../Processed_calibration_images_numbered/", "Used to set the directory of the folder to write the calibration images to");
+DEFINE_string(read_directory, "../Calibration_images_numbered/", "Used to set the directory of the folder containing the calibration images");
+DEFINE_string(write_directory, "../Processed_calibration_images_numbered/", "Used to set the directory of the folder to write the processed calibration images to");
+DEFINE_string(read_image, "image%02d.jpg", "Used to set the naming convention of the images to be read from disk");
+DEFINE_string(write_image, "image%02d.jpg", "Used to set the naming convention of the images to be written to disk");
+
 
 struct ReProjectionResidual
 { 
@@ -102,8 +105,12 @@ int main(int argc, char **argv)
   const int kNumber_of_internal_corners_y = FLAGS_internal_corners_y;
   const double kBlock_dimension = FLAGS_block_dimension;
 
+  // Naming convention for the images to be written to and from the disk.
+  std::string image_name_read = FLAGS_read_image;
+  std::string image_name_write = FLAGS_write_image;
+
   // Point to the folder to read images
-  cv::VideoCapture cap(FLAGS_read_directory);
+  cv::VideoCapture cap(FLAGS_read_directory + FLAGS_read_image);
 
   // Point to the folder to write images
   std::string directory = FLAGS_write_directory;
@@ -316,7 +323,6 @@ int main(int argc, char **argv)
 
   // The current dimension of the true_calibration_board_points_matrix_transpose is a 3x42 but in order to be multiplied in the equation
   // it must be a 4x42. A row of ones would be inserted as the last row.
-
   cv::Mat row = cv::Mat::ones(1, num_of_calibration_points, CV_64FC1); // This is a row of ones
   true_calibration_board_points_matrix_transpose.push_back(row);
 
@@ -354,9 +360,9 @@ int main(int argc, char **argv)
   std::vector<cv::Point2f> min_pixel_error_calibration_point; // Store coordinates of the calibration point where the min pixel error occurred
   std::vector<double> rms_error;
 
-  // The code finds the average error for each calibration point by finding the average of the squares for the U and V errors.
-  // The code then determines which calibration point had the max and min average error. After this is done
-  // The rms error for each image is found by finding the sum of squares of all the U and V errors (for all calibration points),
+  // The code finds the reprojected error distance for each calibration point by finding the square root of the sum of squares for the U and V errors.
+  // The code then determines which calibration point had the max and min reprojected error distance. After this is done,
+  // the rms error for each image is found by finding the sum of squares of all the U and V errors (for all calibration points),
   // then dividing by the number of calibration points and then finding the square root.
 
   for (int z = 0; z != total_chessboards_detected; z++)
@@ -375,14 +381,14 @@ int main(int argc, char **argv)
       double error_u_sq = pow(error_u, 2);
       double error_v_sq = pow(error_v, 2);
 
-      double avg_error = 0.5 * (error_u_sq + error_v_sq);
+      double reprojected_error_distance = sqrt(error_u_sq + error_v_sq);
       error_accumulator = error_v_sq + error_v_sq + error_accumulator;
 
       // Assume the first pixel read has the highest and lowest error.
       if (i == 0)
       {
-        image_max_pixel_error = avg_error;
-        image_min_pixel_error = avg_error;
+        image_max_pixel_error = reprojected_error_distance;
+        image_min_pixel_error = reprojected_error_distance;
 
         max_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
         max_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
@@ -391,16 +397,16 @@ int main(int argc, char **argv)
         min_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
       }
 
-      if (avg_error > image_max_pixel_error)
+      if (reprojected_error_distance > image_max_pixel_error)
       {
-        image_max_pixel_error = avg_error;
+        image_max_pixel_error = reprojected_error_distance;
         max_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
         max_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
       }
 
-      if (avg_error < image_min_pixel_error)
+      if (reprojected_error_distance < image_min_pixel_error)
       {
-        image_min_pixel_error = avg_error;
+        image_min_pixel_error = reprojected_error_distance;
         min_pixel_error_calibration_point_coordinate.x = true_calibration_board_points[i][0];
         min_pixel_error_calibration_point_coordinate.y = true_calibration_board_points[i][1];
       }
@@ -414,7 +420,6 @@ int main(int argc, char **argv)
     rms_error.push_back(rms_error_image);
     max_pixel_error_calibration_point.push_back(max_pixel_error_calibration_point_coordinate);
     min_pixel_error_calibration_point.push_back(min_pixel_error_calibration_point_coordinate);
-
   }
   
   // Display the results to the user
@@ -422,18 +427,18 @@ int main(int argc, char **argv)
   for (int z = 0; z != total_chessboards_detected; z++)
   {
     std::cout << "Image " << z << ": \r\n";
-    std::cout << "Max avg pixel error: " << max_pixel_error[z] << "\r\n";
-    std::cout << "Max avg pixel error location (u, v): " << max_pixel_error_calibration_point[z].x << ", " << max_pixel_error_calibration_point[z].y << "\r\n";
-    std::cout << "Min avg pixel error: " << min_pixel_error[z] << "\r\n";
-    std::cout << "Min avg pixel error location (u, v): " << min_pixel_error_calibration_point[z].x << ", " << min_pixel_error_calibration_point[z].y << "\r\n";
+    std::cout << "Max reprojected error distance: " << max_pixel_error[z] << "\r\n";
+    std::cout << "Max reprojected error distance location (u, v): " << max_pixel_error_calibration_point[z].x << ", " << max_pixel_error_calibration_point[z].y << "\r\n";
+    std::cout << "Min reprojected error distance: " << min_pixel_error[z] << "\r\n";
+    std::cout << "Min reprojected error distance location (u, v): " << min_pixel_error_calibration_point[z].x << ", " << min_pixel_error_calibration_point[z].y << "\r\n";
     std::cout << "Image error rms: " << rms_error[z] << "\r\n\n";
   }
 
   // Superimpose the processed chessboard corners on the calibration images and write images to disk
   for (int z = 0; z != total_chessboards_detected; z++)
   {
-    char filename[50];
-    sprintf(filename, "image%02d.jpg", z); 
+    char filename[100];
+    sprintf(filename, image_name_write.c_str(), z); 
     cv::drawChessboardCorners(images[z], patternsize, processed_chessboard_corners[z], true);
     std::string full_directory = directory + filename;
     
